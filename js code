@@ -1,0 +1,337 @@
+//define sheets and board mapping
+var gameSh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Game");
+
+//Prompt user for name and board size, store responses in sheet
+function prompts(){
+  var response = SpreadsheetApp.getUi().prompt('Enter your name');
+  gameSh.getRange("B6").setValue(response.getResponseText().toUpperCase());
+  var responseBoard = SpreadsheetApp.getUi().prompt('Pick your Board Size: 5,6, or 7');
+  gameSh.getRange("F4").setValue(responseBoard.getResponseText());
+};
+
+//New Game button
+function newGame(){
+  //Clear content from last game
+  gameSh.getRange("F4").clearContent();
+  gameSh.getRange("X2").clearContent();
+  gameSh.getRange("B6").clearContent();
+  gameSh.getRange("F7").setValue(0);
+  gameSh.getRange("F11").setValue(0);
+  gameSh.getRange("K6:AF21").clear();
+  //Prompt user to give their name and choose board size
+  prompts();
+  let boardSize = gameSh.getRange("F4").getValue();
+  //Style the player board and robot board
+  gameSh.getRange(6,11,boardSize,boardSize).setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID)
+  gameSh.getRange(6,11+boardSize+1,boardSize,boardSize).setBorder(true, true, true, true, true, true, '#000000', SpreadsheetApp.BorderStyle.SOLID);
+  //Use board class to get # ships/hits needed for our board size and store in sheet
+  let board = new boardSizeDetails(boardSize);
+  //ui.alert("Place "+board.oneS+" ships (1 cell each). Place "+board.twoS+" ships (2 cells each).","Place by typing '1' or '2' in cells. Press Start Game.",ui.ButtonSet.OK);
+  gameSh.getRange("F14").setValue(board.oneS);
+  gameSh.getRange("F15").setValue(board.twoS);
+  gameSh.getRange("F16").setValue(board.hits);
+}; 
+
+function playerPlaceShips(){
+  //Redefine boardSize, board and get player Board values
+  boardSize = gameSh.getRange("F4").getValue();
+  let playerBoard = gameSh.getRange(6,11,boardSize,boardSize).getValues();
+  board = new boardSizeDetails(boardSize);
+  //Check the number of ships placed. numS is array of ships on playerBoard. stupidCheck is array of RobotBoard
+  let numS = playerBoard.flat().filter(el => {return el===1 || el===2;});
+  let stupidCheck = gameSh.getRange(6,11+boardSize+1,boardSize,boardSize).getValues().flat();
+  //If robotBoard is empty & number of ships on player board is correct & 2-cell ships aren't placed wrong
+  if(stupidCheck.every((el) => el === "") & numS.length === board.hits & twoShipsPlacedWrong(boardSize,playerBoard) === false){
+    //have robot place ships
+    robotPlaceShips(boardSize,board);
+    SpreadsheetApp.getUi().alert("Nice! Time to play! Put a cell range (ex. F7) in the red cell, press enter, and hit the HIT button");
+    return true;
+  // Check if they placed it on the robot board
+  } else if (stupidCheck.indexOf(1) !== -1 || stupidCheck.indexOf(2) !== -1){
+    SpreadsheetApp.getUi().alert("You put a ship on the Robot's board. Try again.");
+  // Check if the right number of ships
+  } else if (stupidCheck.every((el) => el === "") & numS.length !== board.hits){
+    SpreadsheetApp.getUi().alert("You didn't place the right number of ships. Try again");
+  //check if 2 ships are placed correctly
+  } else if (twoShipsPlacedWrong(boardSize,playerBoard) === true){
+    SpreadsheetApp.getUi().alert("Placed your 2 cell ships wrong. They can't be diagonal/must be 2 in a row");
+  };
+};
+
+function robotPlaceShips(){
+  robotBoard = gameSh.getRange(6,11+boardSize+1,boardSize,boardSize).getValues();
+  //Get number of 1 ships to place, while loop to place them randomly up until count
+  let placedShips = [];
+  let w=0;
+  while (w<board.oneS){
+    //have it randomly place in a cell
+    let row = Math.floor(Math.random()*(boardSize))
+    let column = Math.floor(Math.random()*(boardSize))
+    //Check if cell is empty and that it hasn't been selected already
+    if(robotBoard[row][column] === '' && isRepeat(placedShips,row,column) === false){
+       gameSh.getRange(6+row,11+boardSize+column+1).setValue(1).setFontColor('#ffffff');
+       placedShips.push([row,column]);
+       w++;
+    } else console.log('wrong');
+  };
+  //Place 2 ships, while loop, look for a spot, see if anything available above, below, side, side, if so, randomly place in one of those spots
+  let p=0;
+  while (p<board.twoS){
+    //have it randomly place in a cell
+    let row = Math.floor(Math.random()*(boardSize))
+    let column = Math.floor(Math.random()*(boardSize))
+    //Check if cell is empty and that it hasn't been selected already
+    if(robotBoard[row][column] === '' && isRepeat(placedShips,row,column) === false){
+      //Check for space above, below, side, side of the selected cell available
+      let newCell = canPlaceTwoShip(boardSize,row,column,placedShips);
+      placedShips.push([row,column]);
+      placedShips.push(newCell);
+      p++;
+    } else console.log('idk');
+  };
+};
+
+//Player puts cell in box and hits HIT button
+function hit(){
+  boardSize = gameSh.getRange("F4").getValue();
+  board = new boardSizeDetails(boardSize);
+  let plHits = gameSh.getRange("F7").getValue();
+  //get guess from board
+  let guess = gameSh.getRange("X2").getValue();
+  let guessRow = gameSh.getRange(guess).getRowIndex();
+  let guessColumn = gameSh.getRange(guess).getColumnIndex();
+  let guessValue = gameSh.getRange(guess).getValue();
+  //check if row/column of cell is in robotboard range
+  if(guessRow >= 6 && guessRow <6+boardSize && guessColumn >= 12+boardSize && guessColumn < 12+boardSize+boardSize){
+    console.log('in range');
+    if(guessValue == '1' || guessValue == '2'){
+      console.log('hit');
+      gameSh.getRange(guess).setValue('X').setFontColor('#ff0000');
+      //Increae playerhits
+      plHits = plHits + 1;
+      gameSh.getRange("F7").setValue(plHits);
+      //Check for player Win
+      if(plHits == board.hits){
+        SpreadsheetApp.getUi().alert("You win!");
+        return 'player wins'
+      } else {
+        //If no win, have robot do a move
+        console.log('keep playing');
+        robotHit(boardSize,board);
+        };
+    //if not a hit, log a miss and have robot do move
+    } else{
+      console.log('miss');
+      gameSh.getRange(guess).setValue('O').setFontColor('#0000ff');
+      //robotMove
+      robotHit(boardSize,board);
+    };
+  //If not in range, alert player and have them go again
+  } else {
+    console.log('bad move');
+    SpreadsheetApp.getUi().alert("Not a cell on the robot's board. Try again");
+  };
+};
+
+
+function robotHit(boardSize,board){
+  playerBoard = gameSh.getRange(6,11,boardSize,boardSize).getValues();
+  let rHits = gameSh.getRange("F11").getValue();
+  //robot select random cell in board
+  let rowR = Math.floor(Math.random()*(boardSize))
+  let columnR = Math.floor(Math.random()*(boardSize))
+  //Check if cell hasn't been selected already. If it has, repeat function. Else, get the value of the guess
+  if(playerBoard[rowR][columnR] == 'X' || playerBoard[rowR][columnR] == 'O'){
+    robotHit(boardSize,board);
+  }else{
+    let guessValueR = playerBoard[rowR][columnR];
+  //see if hit, do same things as player if hit
+    if(guessValueR == '1' || guessValueR == '2'){
+      console.log('hit');
+      gameSh.getRange(6+rowR,11+columnR).setValue('X').setFontColor('#ff0000');
+      rHits = rHits + 1
+      gameSh.getRange("F11").setValue(rHits);
+      if(rHits == board.hits){
+        SpreadsheetApp.getUi().alert("robot wins!");
+        return 'robot wins'
+      } else {console.log('keep playing');}
+    } else{
+      console.log('miss');
+      gameSh.getRange(6+rowR,11+columnR).setValue('O').setFontColor('#0000ff');
+      return 'miss'
+    };
+  };
+};
+
+//Will return true if the cell is a repeat cell
+function isRepeat(placedShips,row,column){
+  let tt=[]
+  for(let x=0;x<placedShips.length;x++){
+    if(placedShips[x][0] === row && placedShips[x][1]=== column){
+      tt.push(1)
+    }
+  } return tt.includes(1)
+};
+
+//Couldn't put an if statement in the class so I just made a function for the two ships
+function getTwoShips(bS) {
+    if(bS > 2){
+      return bS - 2;
+    } else return 0;
+};
+
+class boardSizeDetails {
+  constructor(bS) {
+    this._boardSize = bS;
+    this._oneS = this._boardSize-1;
+    this._twoS = getTwoShips(bS);
+    this._hits = this._oneS*1 + this._twoS*2;
+    }
+  get boardSize() {
+    return this._boardSize;
+  }
+  get oneS() {
+    return this._oneS;
+  }
+  get twoS() {
+    return this._twoS;
+  }
+  get hits() {
+    return this._hits
+  }
+};
+
+//There is a bug where if 2 ships are placed side by side and placed wrong, it'll see it as true. I wasn't sure how to fix this
+function twoShipsPlacedWrong(boardSize,playerBoard){
+  //checks above, below, right and left for 2
+  //If returns as true, then the 2 ships are placed wrong and there is 
+  let diagonal = [];
+  for(let i=0;i<boardSize;i++){
+    for(let j=0;j<boardSize;j++){
+      //If cell has 2 and is not in first or last row
+      if(playerBoard[i][j]===2 && i != 0 && i != boardSize-1){
+        //If above & below & left & right do not = 2, will return as true as there isn't anything above, below, side side
+        if(playerBoard[i-1][j] !=2 & playerBoard[i+1][j] !=2 
+        & playerBoard[i][j-1] !=2 & playerBoard[i][j+1] != 2){
+          diagonal.push(1);
+        }}
+      //If cell has 2 and is in first row
+      else if(playerBoard[i][j]===2 & i === 0){
+        //If below & left & right do not = 2, 2s are placed wrong
+        if(playerBoard[i+1][j] !=2 &  playerBoard[i][j-1] !=2 
+        & playerBoard[i][j+1] != 2){
+          diagonal.push(1);
+        }}
+      //If cell has 2 and is in the last row
+      else if(playerBoard[i][j]===2 & i === boardSize-1){
+        //If above & left & right do not = 2, 2s are placed wrong
+        if(playerBoard[i-1][j] !=2 & playerBoard[i][j-1] !=2 
+        & playerBoard[i][j+1] != 2){
+          diagonal.push(1);
+        }
+      //Else there is a 2 above, below, or to the side, 2s are placed correctly
+      }else diagonal.push(0);
+    }
+  }return diagonal.includes(1);
+};
+
+function canPlaceTwoShip(boardSize,row,column,placedShips){
+  //checks above, below, right and left for 2
+  //returns array of available spaces
+  let diagonal = [];
+  //if cell not in first or last row, all 4 spaces available to check
+  if(row!=0 & row!=boardSize-1 & column!=0 & column!=boardSize-1){
+    if(isRepeat(placedShips,(row-1),column) === false){
+      diagonal.push(1);};
+    if(isRepeat(placedShips,(row+1),column) === false){
+      diagonal.push(2);};
+    if(isRepeat(placedShips,(row),column-1) === false){
+      diagonal.push(3);}; 
+    if(isRepeat(placedShips,(row),column+1) === false){
+      diagonal.push(4);};
+  //if cell is in first row (but not a corner piece), below/side/side 
+  } else if(row == 0 & column!=0 & column!=boardSize-1){
+    if(isRepeat(placedShips,(row+1),column) === false){
+      diagonal.push(2);};
+    if(isRepeat(placedShips,(row),column-1) === false){
+      diagonal.push(3);}; 
+    if(isRepeat(placedShips,(row),column+1) === false){
+      diagonal.push(4);};
+  //if cell is in last row (but not a corner piece), above/side/side 
+  } else if(row == boardSize-1& column!=0 & column!=boardSize-1){
+    if(isRepeat(placedShips,(row-1),column) === false){
+      diagonal.push(1);};
+    if(isRepeat(placedShips,(row),column-1) === false){
+      diagonal.push(3);}; 
+    if(isRepeat(placedShips,(row),column+1) === false){
+      diagonal.push(4);};
+  //if cell is in first column (but not a corner piece), above/below/one side 
+  } else if(column==0 & row!=0 & row!=boardSize-1){
+    if(isRepeat(placedShips,(row-1),column) === false){
+      diagonal.push(1);};
+    if(isRepeat(placedShips,(row+1),column) === false){
+      diagonal.push(2);}; 
+    if(isRepeat(placedShips,(row),column+1) === false){
+      diagonal.push(4);};
+  //if cell is in last column (but not a corner piece), above/below/one side 
+  } else if(column==boardSize-1 & row!=0 & row!=boardSize-1){
+    if(isRepeat(placedShips,(row-1),column) === false){
+      diagonal.push(1);};
+    if(isRepeat(placedShips,(row+1),column) === false){
+      diagonal.push(2);}; 
+    if(isRepeat(placedShips,(row),column-1) === false){
+      diagonal.push(3);};
+  //if cell is in top left corner, below/right
+  } else if(row ==0 & column ==0){
+    if(isRepeat(placedShips,(row+1),column) === false){
+      diagonal.push(2);}; 
+    if(isRepeat(placedShips,(row),column+1) === false){
+      diagonal.push(4);}; 
+  //if cell is in bottom right corner, above/left
+  } else if(row ==boardSize-1 & column ==boardSize-1){
+    if(isRepeat(placedShips,(row-1),column) === false){
+      diagonal.push(1);}; 
+    if(isRepeat(placedShips,(row),column-1) === false){
+      diagonal.push(3);}; 
+  //if cell is in top right corner, below/left
+  } else if(row ==0 & column ==boardSize-1){
+    if(isRepeat(placedShips,(row+1),column) === false){
+      diagonal.push(2);}; 
+    if(isRepeat(placedShips,(row),column-1) === false){
+      diagonal.push(3);}; 
+  //if cell is in bottom left corner, above/right
+  } else if(row ==boardSize-1 & column ==0){
+    if(isRepeat(placedShips,(row-1),column) === false){
+      diagonal.push(1);}; 
+    if(isRepeat(placedShips,(row),column+1) === false){
+      diagonal.push(4);}; 
+  }console.log(diagonal);
+  //Choose randomly from the available spots
+  let choice = diagonal[Math.floor(Math.random()*(diagonal.length))];
+  //Update sheet with 2 in original cell + selected pair cell and return the pair cell
+  switch(choice) {
+    case 1:
+      gameSh.getRange(6+row,11+boardSize+column+1).setValue(2).setFontColor('#ffffff');
+      gameSh.getRange(6+row-1,11+boardSize+column+1).setValue(2).setFontColor('#ffffff');
+      return [row-1,column]
+      break;
+    case 2:
+      gameSh.getRange(6+row,11+boardSize+column+1).setValue(2).setFontColor('#ffffff');
+      gameSh.getRange(6+row+1,11+boardSize+column+1).setValue(2).setFontColor('#ffffff');
+      return [row+1,column]
+      break;
+    case 3:
+      gameSh.getRange(6+row,11+boardSize+column+1).setValue(2).setFontColor('#ffffff');
+      gameSh.getRange(6+row,11+boardSize+column+1-1).setValue(2).setFontColor('#ffffff');
+      return [row,column-1]
+      break;
+    case 4:
+      gameSh.getRange(6+row,11+boardSize+column+1).setValue(2).setFontColor('#ffffff');
+      gameSh.getRange(6+row,11+boardSize+column+1+1).setValue(2).setFontColor('#ffffff');
+      return [row-1,column+1]
+      break;
+    default:
+      return false;
+  };
+};
+
